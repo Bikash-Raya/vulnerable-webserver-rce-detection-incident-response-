@@ -34,18 +34,18 @@
 
 ## 📋 Overview
 
-This lab demonstrates a **complete offensive-to-defensive security lifecycle** — from building and exploiting a vulnerable web application, to detecting the attack in a SIEM, investigating the incident, and containing it at the network layer.
+In this lab I built a deliberately vulnerable web application, attacked it using a 7-stage kill chain, ingested Apache logs into Microsoft Sentinel, detected the attack with KQL, investigated the incident, and contained it by blocking the attacker at the network layer.
 
-The lab was designed around a real-world scenario: an internet-facing PHP web application with an intentional command injection flaw (CWE-78) that allows an attacker to execute arbitrary OS commands through the browser. After executing the 7-stage attack manually, the VM was left exposed — and a **real-world threat actor independently discovered and exploited the same vulnerability**, generating 82 correlated High-severity events in Microsoft Sentinel.
+I deployed a PHP web application with an intentional command injection flaw (CWE-78). After running my own 7-stage attack I left the VM exposed to the internet. Within a few days real-world threat actor 103.168.66.101 found and exploited the same vulnerability — generating 82 correlated High-severity events in Sentinel that I investigated and contained.
 
-**What this lab covers end to end:**
+**What I did:**
 
-* 🏗️ Deployed a vulnerable PHP web app (`shell_exec()` — CWE-78) on Ubuntu + Apache2 in Azure
+* 🏗️ Deployed a vulnerable PHP web app (`shell_exec()` — CWE-78) on Ubuntu + Apache2 in Azure — intentionally left unsanitized
 * ⚔️ Executed a **7-stage attack chain** — recon → RCE → host discovery → user enumeration → process discovery → network discovery → payload retrieval
 * 📡 Ingested Apache access logs into Microsoft Sentinel via **Custom Logs AMA** connector
 * 🔍 Detected attack commands using **KQL** against the `ApacheHTTPServer_CL` table
 * 🚨 Created a **scheduled High-severity analytics rule** mapped to MITRE ATT&CK
-* 🌐 Left VM exposed — **real attacker 103.168.66.101** exploited the app → **82 correlated Sentinel events**
+* 🌐 Left VM exposed — real attacker **103.168.66.101** independently found and exploited it → **82 correlated Sentinel events** I had to investigate
 * 🔎 Investigated with **3 KQL queries** — attack classification, IP identification, timeline reconstruction
 * 🛡️ Contained the attack with a **real NSG Deny rule** blocking the attacker IP on port 80
 
@@ -117,7 +117,7 @@ The lab was designed around a real-world scenario: an internet-facing PHP web ap
 
 ## ⚠️ The Vulnerability — CWE-78 Command Injection
 
-The "Internal File Search Tool" was deployed with an intentional command injection flaw. The user-supplied `search` parameter is concatenated directly into a shell command with no sanitization, validation, or encoding.
+I deployed a tool called the "Internal File Search Tool" with an intentional command injection flaw. I concatenated user input directly into a shell command with zero sanitization — this is the vulnerability.
 
 ```php
 <?php
@@ -173,7 +173,7 @@ if(isset($_GET['search'])) {
 </html>
 ```
 
-> **Why it's vulnerable:** An attacker appends `;` followed by any OS command. `?search=;whoami` executes as `ls ;whoami` — running both commands. The server returns the output directly in the browser.
+> **Why it works:** Appending `;` breaks out of the intended `ls` command. `?search=;whoami` becomes `ls ;whoami` — both commands run and the server returns the output in the browser.
 
 **Saved to:** `/var/www/html/internal/index.php`
 
@@ -181,7 +181,7 @@ if(isset($_GET['search'])) {
 
 ## ⚔️ 7-Stage Attack Chain
 
-Each stage builds on the previous one — exactly how a real attacker progresses through a compromised system.
+I executed each stage manually from a browser — no special tools needed, just crafted URLs. Each stage builds on the last, exactly how a real attacker progresses.
 
 | Stage | MITRE | Command | What it reveals |
 |-------|-------|---------|-----------------|
@@ -197,7 +197,7 @@ Each stage builds on the previous one — exactly how a real attacker progresses
 
 ## 📡 Apache Log Ingestion into Sentinel
 
-Apache automatically logs every HTTP request to `/var/log/apache2/access.log` — including the injected attack commands in the URL parameters. By streaming this file into Sentinel, every attack command becomes searchable and detectable via KQL.
+Apache logged every HTTP request I made — including the injected commands in the URL parameters. By streaming this file into Sentinel, every `;whoami` and `;cat /etc/passwd` became searchable with KQL.
 
 | Setting | Value |
 | --- | --- |
@@ -210,7 +210,7 @@ Apache automatically logs every HTTP request to `/var/log/apache2/access.log` �
 
 ## 🔍 KQL Detection
 
-The detection strategy searches the raw HTTP log data for known RCE attack keywords. When an attacker injects `;whoami` into the URL, that string appears verbatim in the Apache access log — making it detectable with a simple `has_any()` search.
+My detection approach was to search the raw Apache log entries for known attack keywords. When I injected `;whoami` into the URL, that string appeared verbatim in the access log — a simple `has_any()` query surfaces every attack request instantly.
 
 ```kql
 ApacheHTTPServer_CL
@@ -235,7 +235,7 @@ ApacheHTTPServer_CL
 | Run Every | 5 minutes |
 | Lookback | 10 minutes |
 | Threshold | Results > 0 |
-| Alert Grouping | 24-hour window (prevents alert fatigue) |
+| Alert Grouping | 24-hour window — consolidates repeated alerts from the same attacker into one incident |
 | MITRE Tactics | Initial Access · Execution · Discovery · C2 |
 | MITRE Techniques | T1190 · T1059 · T1082 · T1087 · T1105 |
 
@@ -243,11 +243,11 @@ ApacheHTTPServer_CL
 
 ## 🔎 Incident Investigation — 3 KQL Queries
 
-**Incident:** 🔴 High severity | 82 correlated events | Source IP: 103.168.66.101
+**My incident:** 🔴 High severity | 82 correlated events | Source IP: 103.168.66.101
 
 ### Query 1 — Classify the Attack Activity
 
-*What types of attack commands were executed? This enriches raw log entries with human-readable action labels.*
+*I used this to understand what the attacker was actually doing — labels each log entry with a readable action type.*
 
 ```kql
 ApacheHTTPServer_CL
@@ -264,7 +264,7 @@ ApacheHTTPServer_CL
 
 ### Query 2 — Identify the Attacker IP
 
-*Who is responsible? Summarise request counts per source IP to identify the top attacker.*
+*I used this to confirm which IP was responsible — high count from a single IP means automated or targeted exploitation.*
 
 ```kql
 ApacheHTTPServer_CL
@@ -272,11 +272,11 @@ ApacheHTTPServer_CL
 | summarize AttackCount = count() by IP
 | order by AttackCount desc
 ```
-✅ **103.168.66.101** confirmed as top attacker — automated exploitation behaviour.
+✅ **103.168.66.101** confirmed as the top attacker — the volume and pattern pointed to automated tooling.
 
 ### Query 3 — Reconstruct the Attack Timeline
 
-*When did the attack happen and how did it escalate? Bins events into 5-minute windows.*
+*I used this to see how the attack progressed — binning into 5-minute windows showed the escalation pattern clearly.*
 
 ```kql
 ApacheHTTPServer_CL
@@ -284,13 +284,13 @@ ApacheHTTPServer_CL
 | summarize count() by bin(TimeGenerated, 5m), IP
 | order by TimeGenerated asc
 ```
-✅ Sequential reconnaissance → escalating command execution phases confirmed.
+✅ I could clearly see the attack moving from initial probing to escalating command execution — consistent with automated tooling.
 
 ---
 
 ## 🛡️ Containment — NSG Deny Rule
 
-Rather than taking the server offline, a surgical NSG Deny rule was created targeting only the attacker IP on port 80 — stopping the attacker while keeping the service available to legitimate users.
+Rather than taking the server offline I created a targeted NSG Deny rule blocking only the attacker IP on port 80 — stopping the attack without impacting legitimate users.
 
 | Field | Value |
 | --- | --- |
@@ -306,7 +306,7 @@ ApacheHTTPServer_CL
 | where RawData has "103.168.66.101"
 | order by TimeGenerated desc
 ```
-✅ No further malicious requests observed after NSG enforcement.
+✅ After applying the NSG rule the KQL query returned no further requests from that IP — containment confirmed.
 
 ---
 
@@ -343,7 +343,7 @@ ApacheHTTPServer_CL
 
 ## 🎯 Key Takeaway
 
-> This lab demonstrates a complete offensive-to-defensive SOC workflow — building, attacking, detecting, investigating, and containing a real vulnerability in a live Azure environment. A 7-stage attack chain exploited a PHP command injection flaw (CWE-78) and every command appeared in Apache logs ingested into Microsoft Sentinel. A real-world attacker (103.168.66.101) independently discovered and exploited the same endpoint generating 82 correlated events — validating the detection rule and triggering a high-severity incident that was investigated and contained with a real NSG Deny rule. This mirrors the full SOC analyst workflow used in production environments every day.
+> I built a vulnerable PHP app, attacked it with a 7-stage kill chain, set up Sentinel to detect it, and then a real attacker (103.168.66.101) showed up and exploited the same vulnerability — generating 82 real events that I had to investigate and contain. Going through this end-to-end gave me hands-on experience with the full SOC workflow: detection, investigation, containment, eradication recommendation, recovery planning, and post-incident review.
 
 ---
 
@@ -377,9 +377,9 @@ ApacheHTTPServer_CL
 
 ## 🔧 Eradication
 
-Following containment, the Information Security team raised a remediation ticket to the DevOps/Development team. In a real SOC environment, the analyst is responsible for containment and evidence — the development team implements application-layer code fixes.
+After containment I documented the root cause and recommended fix, and raised a ticket to the development team. My role was identification and containment — the dev team deploys the code fix.
 
-> **SOC Responsibility Boundary:** The SOC contained the attack at the network layer (NSG Deny rule). Eradication requires a code fix from the dev team. This reflects real-world incident response practice.
+> **Note:** I contained the attack at the network layer. The code fix goes to the development team — I raised the ticket with the full vulnerability details and recommended remediation below.
 
 ### Root Cause
 
@@ -411,7 +411,7 @@ if(isset($_GET["search"])) {
 ?>
 ```
 
-**Additional architectural recommendations included in the ticket:**
+**Additional recommendations I included in the ticket:**
 - Move `/internal/` behind authentication — never expose internal tools publicly
 - Consider replacing `shell_exec()` with PHP native functions (`scandir()`, `glob()`) that do not invoke OS commands
 - Deploy a Web Application Firewall (WAF) to block injection patterns at the network layer
@@ -421,7 +421,7 @@ if(isset($_GET["search"])) {
 
 ## ♻️ Recovery
 
-Recovery is conditional on the development team deploying the code fix. Until then, the NSG Deny rule remains in place as an interim control.
+Recovery depends on the dev team deploying the fix. Until then I am keeping the NSG Deny rule as an interim control.
 
 **Recovery checklist:**
 - Confirm patched `index.php` is deployed to `/var/www/html/internal/`
@@ -437,22 +437,22 @@ ApacheHTTPServer_CL
 | project TimeGenerated, RawData
 | order by TimeGenerated desc
 ```
-✅ Expected: No new entries after containment timestamp.
+✅ If no new entries appear after the containment timestamp — recovery confirmed. Any entries after that mean the attacker found another path and I need to re-investigate.
 
 ---
 
 ## 📝 Post-Incident Review
 
-### Key Findings
-- The vulnerable endpoint was publicly reachable with **no authentication** — internal tools must never be exposed without access controls
-- Apache access logs provided **complete forensic evidence** to reconstruct the full 7-stage attack chain
-- The analytics rule triggered **within 5 minutes** of the first attack — detection was effective
-- Alert grouping consolidated **82 events into 1 incident** — preventing alert fatigue
-- A real-world attacker found and exploited the endpoint **within days** of exposure — confirming that any vulnerable public-facing service will be attacked
+### What I Found
+- The `/internal/` endpoint had no authentication and was publicly reachable — I should have added access controls from the start
+- Apache logs alone gave me everything I needed to reconstruct the full attack — no additional tooling required
+- My analytics rule triggered within 5 minutes of the first attack — the detection timing worked well
+- The 24-hour alert grouping turned 82 separate alerts into 1 incident — much easier to work with
+- The real-world attacker showed up within days — confirmed that any exposed vulnerable endpoint gets found and exploited quickly
 
-### Recommendations
-- Deploy a **Web Application Firewall (WAF)** to block injection patterns before they reach the application
-- Enforce **authentication** on all internal/admin endpoints
-- Add **automated vulnerability scanning** (e.g. Nessus) before deployment
-- **Ban `shell_exec()`** in secure coding standards unless strictly controlled
-- Retain the **NSG block rule** for 103.168.66.101 permanently
+### What I Would Do Differently
+- Deploy a WAF to block injection patterns before they reach the application
+- Add authentication to `/internal/` from day one — it should never have been publicly accessible
+- Run automated vulnerability scanning (e.g. Nessus) before exposing any app — would have caught this immediately
+- Avoid `shell_exec()` and use PHP native functions like `scandir()` instead — same result, no OS command risk
+- Keep the NSG block on 103.168.66.101 permanently — no reason to ever let that IP back in
