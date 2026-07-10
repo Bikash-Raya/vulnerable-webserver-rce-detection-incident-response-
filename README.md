@@ -372,3 +372,87 @@ ApacheHTTPServer_CL
 ⭐ If you find this project useful, feel free to star the repository ⭐
 
 </div>
+
+---
+
+## 🔧 Eradication
+
+Following containment, the Information Security team raised a remediation ticket to the DevOps/Development team. In a real SOC environment, the analyst is responsible for containment and evidence — the development team implements application-layer code fixes.
+
+> **SOC Responsibility Boundary:** The SOC contained the attack at the network layer (NSG Deny rule). Eradication requires a code fix from the dev team. This reflects real-world incident response practice.
+
+### Root Cause
+
+The `/internal/index.php` endpoint passes user input directly to `shell_exec()` with no sanitization (CWE-78 / OWASP A03:2021 — Injection). Any attacker who discovers this endpoint can execute arbitrary OS commands as the Apache web server process (`www-data`).
+
+### Recommended Fix — Provided to Development Team
+
+```php
+<?php
+
+$result = "";
+$error  = "";
+
+if(isset($_GET["search"])) {
+    $input = $_GET["search"];
+
+    // SECURE VERSION -- escapeshellarg() neutralizes command injection
+    // Wraps input in single quotes and escapes special characters
+    // so user input can never break out of the intended ls command
+    $safe_input = escapeshellarg($input);
+
+    // Additional safeguard -- only allow alphanumeric and safe path chars
+    if(!preg_match("/^[a-zA-Z0-9\/._-]+$/", $input)) {
+        $error = "Invalid input. Only alphanumeric characters and paths are allowed.";
+    } else {
+        $result = shell_exec("ls " . $safe_input);
+    }
+}
+?>
+```
+
+**Additional architectural recommendations included in the ticket:**
+- Move `/internal/` behind authentication — never expose internal tools publicly
+- Consider replacing `shell_exec()` with PHP native functions (`scandir()`, `glob()`) that do not invoke OS commands
+- Deploy a Web Application Firewall (WAF) to block injection patterns at the network layer
+- Restrict `/internal/` to trusted IP ranges via Apache access controls
+
+---
+
+## ♻️ Recovery
+
+Recovery is conditional on the development team deploying the code fix. Until then, the NSG Deny rule remains in place as an interim control.
+
+**Recovery checklist:**
+- Confirm patched `index.php` is deployed to `/var/www/html/internal/`
+- Verify the fix — test `;whoami` injection — should return an error, not command output
+- Run post-recovery KQL query to confirm no further attack traffic
+- Monitor `ApacheHTTPServer_CL` for 24-48 hours post-recovery
+
+**Post-recovery verification query:**
+```kql
+ApacheHTTPServer_CL
+| where RawData has "103.168.66.101"
+    or RawData has_any ("whoami","passwd","uname","curl","payload")
+| project TimeGenerated, RawData
+| order by TimeGenerated desc
+```
+✅ Expected: No new entries after containment timestamp.
+
+---
+
+## 📝 Post-Incident Review
+
+### Key Findings
+- The vulnerable endpoint was publicly reachable with **no authentication** — internal tools must never be exposed without access controls
+- Apache access logs provided **complete forensic evidence** to reconstruct the full 7-stage attack chain
+- The analytics rule triggered **within 5 minutes** of the first attack — detection was effective
+- Alert grouping consolidated **82 events into 1 incident** — preventing alert fatigue
+- A real-world attacker found and exploited the endpoint **within days** of exposure — confirming that any vulnerable public-facing service will be attacked
+
+### Recommendations
+- Deploy a **Web Application Firewall (WAF)** to block injection patterns before they reach the application
+- Enforce **authentication** on all internal/admin endpoints
+- Add **automated vulnerability scanning** (e.g. Nessus) before deployment
+- **Ban `shell_exec()`** in secure coding standards unless strictly controlled
+- Retain the **NSG block rule** for 103.168.66.101 permanently
