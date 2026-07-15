@@ -17,20 +17,20 @@
 ---
 
 **Prepared by:** Bikash Raya
-**Project Type:** Full Offensive-to-Defensive Lab — RCE Exploitation, Log Ingestion, Detection, Investigation & NSG Containment
 
 </div>
 
 ---
 
-## 📁 Repository Structure
+## 📁 Full Lab Walkthrough — Proof of Work
 
 | File | Description |
 | --- | --- |
-| [Vulnerable_WebServer_RCE_Detection_IR_Lab_Report.docx](./Vulnerable_WebServer_RCE_Detection_IR_Lab_Report.docx) | Complete lab report with all screenshots and full source code embedded |
-| README.md | Project overview |
+| [Vulnerable_WebServer_RCE_Detection_IR_Lab_Report.pdf](./Vulnerable_WebServer_RCE_Detection_IR_Lab_Report.pdf) | Hands-on lab walkthrough with screenshots |
+
 
 ---
+<br>
 
 ## 📋 Overview
 
@@ -121,7 +121,6 @@ The "Internal File Search Tool" was deployed with an intentional command injecti
 
 ```php
 <?php
-
 $result = "";
 $error  = "";
 
@@ -133,55 +132,13 @@ if(isset($_GET['search'])) {
     $result  = shell_exec($command);   // arbitrary OS command executed on the server
 }
 ?>
-
-<!DOCTYPE html>
-<html>
-<head>
-    <title>File Search Utility</title>
-    <style>
-        body { background:#0f172a; font-family:Arial,sans-serif; color:white;
-               display:flex; justify-content:center; align-items:center; height:100vh; }
-        .container { background:#1e293b; padding:40px; border-radius:12px;
-                     width:600px; box-shadow:0 0 25px rgba(0,0,0,0.6); }
-        h1 { text-align:center; margin-bottom:30px; }
-        input[type="text"] { width:100%; padding:12px; border-radius:6px;
-                             border:none; margin-bottom:15px; font-size:16px; }
-        button { width:100%; padding:12px; border:none; border-radius:6px;
-                 background:#3b82f6; color:white; font-size:16px; cursor:pointer; }
-        button:hover { background:#2563eb; }
-        .output { background:black; padding:15px; margin-top:20px;
-                  border-radius:6px; max-height:250px; overflow-y:auto;
-                  font-family:monospace; }
-        .footer { margin-top:15px; font-size:12px; text-align:center; color:#94a3b8; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Internal File Search Tool</h1>
-        <form method="GET">
-            <input type="text" name="search" placeholder="Enter directory (e.g. /var/www)">
-            <button type="submit">Search</button>
-        </form>
-        <?php if($result): ?>
-        <div class="output">
-            <pre><?php echo $result; ?></pre>
-        </div>
-        <?php endif; ?>
-        <div class="footer">Internal DevOps Utility v1.0</div>
-    </div>
-</body>
-</html>
 ```
 
 > **Why it works:** Appending `;` breaks out of the `ls` command. `?search=;whoami` becomes `ls ;whoami` — both commands execute and the output is returned directly in the browser.
 
-**Saved to:** `/var/www/html/internal/index.php`
-
 ---
 
 ## ⚔️ 7-Stage Attack Chain
-
-Each stage was executed manually from a browser using crafted URLs — no special tools required. Each stage builds on the previous one, exactly as a real attacker would progress.
 
 | Stage | MITRE | Command | What it reveals |
 |-------|-------|---------|-----------------|
@@ -197,8 +154,6 @@ Each stage was executed manually from a browser using crafted URLs — no specia
 
 ## 📡 Apache Log Ingestion into Sentinel
 
-Apache logs every HTTP request — including the injected commands in the URL parameters. By streaming this file into Sentinel, every `;whoami` and `;cat /etc/passwd` becomes searchable and detectable with KQL.
-
 | Setting | Value |
 | --- | --- |
 | Connector | Custom Logs via AMA |
@@ -209,8 +164,6 @@ Apache logs every HTTP request — including the injected commands in the URL pa
 ---
 
 ## 🔍 KQL Detection
-
-The detection approach is to search raw Apache log entries for known RCE command keywords. When `;whoami` is injected into the URL, that string appears verbatim in the access log — a simple `has_any()` query surfaces every attack request from the noise of normal traffic.
 
 ```kql
 ApacheHTTPServer_CL
@@ -230,13 +183,11 @@ ApacheHTTPServer_CL
 | Setting | Value |
 | --- | --- |
 | Rule Name | Linux Web Application Command Injection Detection |
-| Alert Name | Possible Linux Web Application RCE Attempt |
 | Severity | 🔴 **High** |
 | Run Every | 5 minutes |
 | Lookback | 10 minutes |
 | Threshold | Results > 0 |
-| Alert Grouping | 24-hour window — consolidates repeated alerts into a single incident |
-| MITRE Tactics | Initial Access · Execution · Discovery · C2 |
+| Alert Grouping | 24-hour window |
 | MITRE Techniques | T1190 · T1059 · T1082 · T1087 · T1105 |
 
 ---
@@ -246,9 +197,6 @@ ApacheHTTPServer_CL
 **Incident:** 🔴 High severity | 82 correlated events | Source IP: 103.168.66.101
 
 ### Query 1 — Classify the Attack Activity
-
-*Labels each log entry with a readable action type to immediately reveal the attack pattern.*
-
 ```kql
 ApacheHTTPServer_CL
 | extend IP = tostring(split(RawData, " ")[0])
@@ -263,34 +211,26 @@ ApacheHTTPServer_CL
 ```
 
 ### Query 2 — Identify the Attacker IP
-
-*Extracts the source IP and summarises request counts — a high count from a single IP indicates automated or targeted exploitation.*
-
 ```kql
 ApacheHTTPServer_CL
 | extend IP = tostring(split(RawData, " ")[0])
 | summarize AttackCount = count() by IP
 | order by AttackCount desc
 ```
-✅ **103.168.66.101** confirmed as top attacker — volume and request pattern consistent with automated exploitation.
+✅ **103.168.66.101** confirmed as top attacker.
 
 ### Query 3 — Reconstruct the Attack Timeline
-
-*Bins events into 5-minute windows to visualise attack intensity and progression over time.*
-
 ```kql
 ApacheHTTPServer_CL
 | extend IP = tostring(split(RawData, " ")[0])
 | summarize count() by bin(TimeGenerated, 5m), IP
 | order by TimeGenerated asc
 ```
-✅ Sequential phases visible — initial probing followed by escalating command execution, consistent with automated tooling.
+✅ Sequential phases visible — initial probing followed by escalating command execution.
 
 ---
 
 ## 🛡️ Containment — NSG Deny Rule
-
-Rather than taking the server offline, a targeted NSG Deny rule was created blocking only the attacker IP on port 80 — stopping the attack without impacting legitimate users.
 
 | Field | Value |
 | --- | --- |
@@ -300,78 +240,7 @@ Rather than taking the server offline, a targeted NSG Deny rule was created bloc
 | Action | **Deny** |
 | Priority | 101 |
 
-**Post-block verification:**
-```kql
-ApacheHTTPServer_CL
-| where RawData has "103.168.66.101"
-| order by TimeGenerated desc
-```
 ✅ After the NSG rule was applied, the verification query returned no further requests from that IP — containment confirmed.
-
----
-
-## 🎯 MITRE ATT&CK Techniques
-
-| Technique | Name | Tactic |
-|-----------|------|--------|
-| T1190 | Exploit Public-Facing Application | Initial Access |
-| T1059 | Command & Scripting Interpreter | Execution |
-| T1082 | System Information Discovery | Discovery |
-| T1033 | System Owner/User Discovery | Discovery |
-| T1087 | Account Discovery | Discovery |
-| T1057 | Process Discovery | Discovery |
-| T1046 | Network Service Discovery | Discovery |
-| T1105 | Ingress Tool Transfer | Command & Control |
-
----
-
-## 🎯 Skills Demonstrated
-
-* Vulnerable Web Application Deployment (PHP Command Injection — CWE-78)
-* 7-Stage Offensive Attack Chain Execution
-* Apache Log Ingestion into Sentinel (Custom Logs via AMA + DCR)
-* KQL Threat Detection (has_any, extend, case, summarize, bin)
-* Scheduled Analytics Rule Creation (High severity, MITRE mapped)
-* Real Incident Investigation (3 KQL queries)
-* Attack Timeline Reconstruction
-* MITRE ATT&CK Mapping (8 techniques)
-* NSG-Based Network Containment (real Deny rule)
-* Microsoft Sentinel + Defender XDR Unified Portal
-* Linux CLI & Azure VM Administration
-
----
-
-## 🎯 Key Takeaway
-
-> A vulnerable PHP app was built and attacked with a 7-stage kill chain. Sentinel was configured to detect the attack — and a real attacker (103.168.66.101) independently showed up and exploited the same vulnerability, generating 82 real events that were investigated and contained. This lab covered the complete SOC workflow end-to-end: detection, investigation, containment, eradication recommendation, recovery planning, and post-incident review.
-
----
-
-## 🔗 Related Projects
-
-> Part of the **Bikash Security Lab** series:
-> * [Microsoft Sentinel & Defender XDR — SOC IR Lab](https://github.com/Bikash-Raya/Sentinel-Defender-XDR-SOC-Incident-Response-lab)
-> * [Microsoft Sentinel — GeoIP Watchlist & Attack Map](https://github.com/Bikash-Raya/microsoft-sentinel-geoip-watchlist-attack-map)
-> * [LummaC2 Threat Hunting — Sentinel & Sysmon](https://github.com/Bikash-Raya/Threat-Hunting-Lab-Sentinel-Sysmon--lummac2-)
-
----
-
-## 🔗 Connect With Me
-
-<div align="center">
-
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue?style=for-the-badge&logo=linkedin)](https://www.linkedin.com/in/bikash-raya/)
-[![GitHub](https://img.shields.io/badge/GitHub-Follow-black?style=for-the-badge&logo=github)](https://github.com/Bikash-Raya)
-
-</div>
-
----
-
-<div align="center">
-
-⭐ If you find this project useful, feel free to star the repository ⭐
-
-</div>
 
 ---
 
@@ -379,50 +248,24 @@ ApacheHTTPServer_CL
 
 > **Lab Scope:** The lab was completed through containment — NSG Deny rule blocking 103.168.66.101 on port 80. The phases below were not executed in this lab. They represent the real-world steps that would follow in a production SOC incident, and are included to demonstrate understanding of the full incident response lifecycle.
 
----
-
 ### Eradication
-
-Containment stops the immediate threat but does not fix the underlying vulnerability. In a production environment, eradication would be handed off to the development team with a formal remediation ticket covering:
-
-- **Code fix:** Replace `shell_exec()` with `escapeshellarg()` to neutralize injected commands — or remove `shell_exec()` entirely and use PHP native functions like `scandir()` which achieve the same result without invoking OS commands
-- **Authentication:** The `/internal/` endpoint must be placed behind a login. An internal tool exposed to the public internet with no authentication is a critical gap regardless of whether the code is patched
-- **WAF deployment:** A Web Application Firewall should be deployed in front of the web server to inspect HTTP requests and block injection patterns before they reach the application layer
-- **Apache access controls:** Restrict `/internal/` to trusted IP ranges — defence in depth on top of the code fix
-
----
+- **Code fix:** Replace `shell_exec()` with `escapeshellarg()` or use PHP native functions like `scandir()` — same result, no OS command risk
+- **Authentication:** The `/internal/` endpoint must be placed behind a login — never expose internal tools publicly
+- **WAF:** Deploy a Web Application Firewall to block injection patterns before they reach the application
+- **Apache access controls:** Restrict `/internal/` to trusted IP ranges
 
 ### Recovery
-
-Recovery is the process of safely returning the service to normal operation after eradication is confirmed. Rushing recovery without verification risks re-exposing the same vulnerability:
-
-- Confirm the patched code is live and verify `;whoami` injection now returns an error rather than command output
-- Run a post-fix KQL query against `ApacheHTTPServer_CL` to confirm no further attack traffic
-- Decide whether the NSG block on `103.168.66.101` should be retained permanently as a layered defence even after the code is fixed
-- Monitor `ApacheHTTPServer_CL` for 24-48 hours post-recovery — attackers sometimes return after a short gap to test whether defences have been lifted
-
-**Post-recovery verification:**
-```kql
-ApacheHTTPServer_CL
-| where RawData has "103.168.66.101"
-    or RawData has_any ("whoami","passwd","uname","curl","payload")
-| project TimeGenerated, RawData
-| order by TimeGenerated desc
-```
-
----
+- Confirm patched code is live and verify `;whoami` now returns an error
+- Run post-fix KQL query to confirm no further attack traffic
+- Decide whether NSG block on 103.168.66.101 should be retained permanently
+- Monitor `ApacheHTTPServer_CL` for 24-48 hours post-recovery
 
 ### Post-Incident Review
-
-A post-incident review turns a security incident into an improvement opportunity:
-
-- **Detection worked** — the analytics rule triggered within 5 minutes and alert grouping consolidated 82 events into a single manageable incident under real-world attack conditions
-- **No authentication on `/internal/`** — any internal tool should require authentication before the code is even reviewed for vulnerabilities. This is a preventable risk
-- **Apache logs were sufficient** — centralised log ingestion into Sentinel was essential. Without it this attack would have been completely invisible. No additional forensic tooling was needed to reconstruct the full 7-stage chain
-- **The attacker appeared within days** — the window between exposure and exploitation is short. Internet-facing vulnerabilities are found and attacked quickly
-- **Network containment is not a substitute for a code fix** — the NSG Deny rule was an effective interim control, but both layers are needed for a complete response
-
----
+- Detection worked — analytics rule triggered within 5 minutes, alert grouping consolidated 82 events into one incident
+- No authentication on `/internal/` — a preventable risk
+- Apache logs alone were sufficient to reconstruct the full 7-stage attack chain
+- The real-world attacker appeared within days — any vulnerable public-facing service will be found and exploited quickly
+- Network containment is not a substitute for a code fix — both layers are needed
 
 ---
 
@@ -469,6 +312,12 @@ A post-incident review turns a security incident into an improvement opportunity
 > * [Microsoft Sentinel & Defender XDR — SOC IR Lab](https://github.com/Bikash-Raya/Sentinel-Defender-XDR-SOC-Incident-Response-lab)
 > * [Microsoft Sentinel — GeoIP Watchlist & Attack Map](https://github.com/Bikash-Raya/microsoft-sentinel-geoip-watchlist-attack-map)
 > * [LummaC2 Threat Hunting — Sentinel & Sysmon](https://github.com/Bikash-Raya/Threat-Hunting-Lab-Sentinel-Sysmon--lummac2-)
+> * [OWASP ZAP — Web Application Security](https://github.com/Bikash-Raya/Web-Application-Security-OWASP-ZAP)
+> * [Nessus Vulnerability Management Lab](https://github.com/Bikash-Raya/Nessus-Vulnerability-Management-Lab)
+
+---
+
+> 📄 Thanks for reading! For a full hands-on walkthrough of this lab with screenshots — [download the lab report here](./Vulnerable_WebServer_RCE_Detection_IR_Lab_Report.pdf)
 
 ---
 
@@ -488,87 +337,3 @@ A post-incident review turns a security incident into an improvement opportunity
 ⭐ If you find this project useful, feel free to star the repository ⭐
 
 </div>
-
----
-
-## 🔧 Eradication
-
-Following containment, the root cause was documented and a remediation ticket raised to the development team. The SOC analyst role covers identification and containment — the development team deploys the code fix.
-
-> **Note:** Containment was handled at the network layer via NSG. The code fix was documented and passed to the development team as a remediation ticket — full details and recommended code below.
-
-### Root Cause
-
-The `/internal/index.php` endpoint passes user input directly to `shell_exec()` with no sanitization (CWE-78 / OWASP A03:2021 — Injection). Any attacker who discovers this endpoint can execute arbitrary OS commands as the Apache web server process (`www-data`).
-
-### Recommended Fix — Provided to Development Team
-
-```php
-<?php
-
-$result = "";
-$error  = "";
-
-if(isset($_GET["search"])) {
-    $input = $_GET["search"];
-
-    // SECURE VERSION -- escapeshellarg() neutralizes command injection
-    // Wraps input in single quotes and escapes special characters
-    // so user input can never break out of the intended ls command
-    $safe_input = escapeshellarg($input);
-
-    // Additional safeguard -- only allow alphanumeric and safe path chars
-    if(!preg_match("/^[a-zA-Z0-9\/._-]+$/", $input)) {
-        $error = "Invalid input. Only alphanumeric characters and paths are allowed.";
-    } else {
-        $result = shell_exec("ls " . $safe_input);
-    }
-}
-?>
-```
-
-**Additional recommendations included in the remediation ticket:**
-- Move `/internal/` behind authentication — never expose internal tools publicly
-- Consider replacing `shell_exec()` with PHP native functions (`scandir()`, `glob()`) that do not invoke OS commands
-- Deploy a Web Application Firewall (WAF) to block injection patterns at the network layer
-- Restrict `/internal/` to trusted IP ranges via Apache access controls
-
----
-
-## ♻️ Recovery
-
-Recovery is conditional on the development team deploying the code fix. Until then, the NSG Deny rule remains as an interim control.
-
-**Recovery checklist:**
-- Confirm patched `index.php` is deployed to `/var/www/html/internal/`
-- Verify the fix — test `;whoami` injection — should return an error, not command output
-- Run post-recovery KQL query to confirm no further attack traffic
-- Monitor `ApacheHTTPServer_CL` for 24-48 hours post-recovery
-
-**Post-recovery verification query:**
-```kql
-ApacheHTTPServer_CL
-| where RawData has "103.168.66.101"
-    or RawData has_any ("whoami","passwd","uname","curl","payload")
-| project TimeGenerated, RawData
-| order by TimeGenerated desc
-```
-✅ No new entries after the containment timestamp = recovery confirmed. Any entries after that timestamp indicate the attacker found another path — re-investigate immediately.
-
----
-
-## 📝 Post-Incident Review
-
-### Key Findings
-- The `/internal/` endpoint had no authentication and was publicly reachable — access controls should have been in place from the start
-- Apache access logs alone provided complete forensic evidence to reconstruct the full 7-stage attack chain
-- The analytics rule triggered within 5 minutes of the first attack — detection timing was effective
-- Alert grouping (24-hour window) consolidated 82 events into a single incident — far more manageable
-- The real-world attacker appeared within days of exposure — confirming that any vulnerable internet-facing service will be discovered and exploited quickly
-
-### Recommendations
-- Deploy a Web Application Firewall (WAF) to block injection patterns before they reach the application
-- Add authentication to `/internal/` from day one — internal tools should never be publicly accessible without a login
-- Run automated vulnerability scanning (e.g. Nessus) before exposing any application — would have caught this command injection immediately
-- Avoid `shell_exec()` and use PHP native functions like `scandir()` instead — same functionality, no OS command risk
-- Retain the NSG block on 103.168.66.101 permanently — no reason to allow that IP back in
